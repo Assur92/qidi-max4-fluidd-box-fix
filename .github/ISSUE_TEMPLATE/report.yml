@@ -1,0 +1,58 @@
+name: Compatibility report / problem
+description: Report whether the fix works on your printer, or what went wrong.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please run the read-only check first, it changes nothing:
+        `python3 ~/qidi_fluidd_box_fix.py --check`
+  - type: input
+    id: model
+    attributes:
+      label: Printer model
+      placeholder: e.g. QIDI Max4, Plus4, Q2
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: As shown on the printer screen (Settings / About).
+      placeholder: e.g. 01.01.07.01
+    validations:
+      required: true
+  - type: dropdown
+    id: box
+    attributes:
+      label: Box
+      options:
+        - One QIDI Box
+        - Several QIDI Boxes
+        - RS485 box
+        - No box
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: spools
+    attributes:
+      label: Spools
+      options:
+        - Without RFID tags
+        - With RFID tags
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of --check
+      description: Paste the whole report.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw. Error messages and screenshots help.

@@ -3,6 +3,10 @@
 Unofficial fix for the **Material Control** (box / multi-colour) panel in Fluidd after the
 **QD_MAX4 01.01.07.01** firmware update. Not affiliated with QIDI.
 
+> **Applies to:** QIDI Max4 · firmware **QD_MAX4 01.01.07.01** · bundled **Fluidd v1.30.5** (`assets/index-DlFvHGAh.js`).
+> Different model or version? Run the [read-only check](#other-qidi-printers-or-something-does-not-work) first.
+> After a QIDI update, [run the script again](#after-the-next-qidi-update); to undo, see [Undo](#undo).
+
 | Before: stock Fluidd after the update | After: with this fix |
 |---|---|
 | ![Fluidd box panel before the fix: every slot shows a question mark](docs/before.png) | ![Fluidd box panel after the fix: slots show material and colour](docs/after.png) |
