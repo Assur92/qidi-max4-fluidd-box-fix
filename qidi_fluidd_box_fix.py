@@ -22,18 +22,32 @@ Usage (on the printer):
   sudo python3 qidi_fluidd_box_fix.py             apply (backs up originals to *.orig)
   sudo python3 qidi_fluidd_box_fix.py --restore   put the original files back
   python3 qidi_fluidd_box_fix.py --dry-run        only check whether the patch fits
-Options: --fluidd-dir DIR (default /home/qidi/fluidd)
+  python3 qidi_fluidd_box_fix.py --check          read-only compatibility report to paste into a GitHub issue
+Options: --fluidd-dir DIR (default /home/qidi/fluidd), --moonraker URL (default http://127.0.0.1:7125)
 """
 import argparse
+import hashlib
 import json
 import pathlib
+import platform
 import re
 import shutil
+import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 VERSION = "qd-box-fix-v1"
 MARKER = "qd-box-fix-"
 DEFAULT_DIR = "/home/qidi/fluidd"
+DEFAULT_MOONRAKER = "http://127.0.0.1:7125"
+REPO = "https://github.com/Assur92/qidi-max4-fluidd-box-fix"
+
+# Firmware features the patched Fluidd relies on; --check looks for them.
+NEW_COMMANDS = ["LOAD_FILAMENT_CONTROL", "UNLOAD_FILAMENT_CONTROL", "EJECT_FILAMENT_CONTROL", "READ_RFID",
+                "UPDATE_FILAMENT_INFORMATION"]
+OLD_COMMANDS = ["E_LOAD", "E_UNLOAD", "E_BOX", "RFID_READ"]
+FILAMENT_INFO_KEYS = ["vendor_str", "filament_str", "color_rgb_str"]
 
 # Vendors and materials from QIDI_Client/resource/filament_config/filament-0.4.json
 # (the 0.4 file contains every entry of the other nozzle files). The firmware looks up "<vendor> <material>".
@@ -132,8 +146,12 @@ def sw_replacements(bundle):
     return [('{"revision":null,"url":"' + bundle + '"}', '{"revision":"' + VERSION + '","url":"' + bundle + '"}')]
 
 
+class PatchError(Exception):
+    pass
+
+
 def fail(msg):
-    sys.exit("ERROR: " + msg)
+    raise PatchError(msg)
 
 
 # open() with newline="" keeps line endings byte for byte; pathlib's write_text(newline=) needs Python 3.10,
@@ -189,17 +207,22 @@ def apply_replacements(path, text, replacements):
     return text
 
 
-def patch(root, dry_run):
+def plan_patch(root):
+    """Return (bundle, current texts, patched texts); patched is None when this version is already applied.
+    Every patched file is built before anything is written, so a mismatch leaves the files untouched."""
     bundle = find_bundle(root)
     files = [(root / bundle, BUNDLE_REPLACEMENTS), (root / "sw.js", sw_replacements(bundle))]
-
     current = {path: read_file(path) for path, _ in files}
     if all(VERSION in text for text in current.values()):
+        return bundle, current, None
+    return bundle, current, {path: apply_replacements(path, original_text(path), repl) for path, repl in files}
+
+
+def patch(root, dry_run):
+    _, current, patched = plan_patch(root)
+    if patched is None:
         print(f"Already patched with {VERSION}, nothing to do.")
         return
-
-    # Build every patched file before writing anything, so a mismatch leaves the files untouched.
-    patched = {path: apply_replacements(path, original_text(path), repl) for path, repl in files}
     if dry_run:
         print("Dry run OK: the patch fits this Fluidd build. Nothing was changed.")
         return
@@ -237,21 +260,124 @@ def restore(root):
         print("\nDone. Close every Fluidd tab, open Fluidd again and press Ctrl+F5.")
 
 
+def moonraker_get(base, path):
+    with urllib.request.urlopen(base.rstrip("/") + path, timeout=10) as response:
+        return json.load(response)["result"]
+
+
+def md5(path):
+    return hashlib.md5(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+
+
+def qidi_packages():
+    try:
+        out = subprocess.run(["dpkg-query", "-W", "-f=${Package} ${Version}\n"], capture_output=True, text=True,
+                             timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "unknown (dpkg-query not available)"
+    pkgs = [line for line in out.splitlines() if re.match(r"(qd|qidi)[-_]", line, re.I)]
+    return ", ".join(pkgs) or "none found"
+
+
+def check_fluidd(root, rows, problems):
+    for name in (".version", "release_info.json"):
+        if (root / name).is_file():
+            rows.append(("Fluidd " + name, read_file(root / name).strip()[:120]))
+    try:
+        bundle, current, patched = plan_patch(root)
+    except PatchError as e:
+        rows.append(("Fluidd patch", "does NOT fit"))
+        problems.append("Fluidd: " + " ".join(str(e).split()))
+        return
+    rows.append(("Fluidd bundle", f"{bundle} md5 {md5(root / bundle)}, sw.js md5 {md5(root / 'sw.js')}"))
+    if patched is None:
+        state = f"patched with {VERSION}"
+    elif any(MARKER in text for text in current.values()):
+        state = "patched with an older version, update fits"
+    else:
+        state = "not patched, patch fits"
+    rows.append(("Fluidd patch", state))
+
+
+def check_printer(base, rows, problems):
+    try:
+        info = moonraker_get(base, "/printer/info")
+        objects = moonraker_get(base, "/printer/objects/list")["objects"]
+        commands = moonraker_get(base, "/printer/gcode/help")
+        status = moonraker_get(base, "/printer/objects/query?box_extras&multi_color_controller&save_variables")["status"]
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        rows.append(("Moonraker", f"not reachable at {base} ({e})"))
+        problems.append("Could not read the printer state from Moonraker, so the firmware side was not checked.")
+        return
+    rows.append(("Klipper", f"{info.get('software_version', '?')} (state: {info.get('state', '?')})"))
+    rows.append(("Box objects", ", ".join(o for o in objects if re.match(r"box|multi_color", o)) or "none"))
+
+    missing = [c for c in NEW_COMMANDS if c not in commands]
+    rows.append(("New box commands", "all present" if not missing else "missing: " + ", ".join(missing)))
+    rows.append(("Old box commands", ", ".join(c for c in OLD_COMMANDS if c in commands) or "none (removed)"))
+    if missing:
+        problems.append("Firmware lacks commands the patched buttons send: " + ", ".join(missing))
+
+    boxes = (status.get("box_extras") or {}).get("boxes") or []
+    online = [b for b in boxes if b.get("is_online")]
+    infos = [fi for b in online for fi in (b.get("filament_info") or [])]
+    rows.append(("Boxes online", f"{len(online)} of {len(boxes)}, {len(infos)} slots with filament_info"))
+    if not infos:
+        problems.append("box_extras.boxes[].filament_info is missing - the patch reads slot materials from it.")
+    elif any(k not in infos[0] for k in FILAMENT_INFO_KEYS):
+        problems.append("filament_info lacks some of " + ", ".join(FILAMENT_INFO_KEYS))
+
+    mcc_box = (status.get("multi_color_controller") or {}).get("box") or {}
+    rows.append(("b_endstop_state", "present" if "b_endstop_state" in mcc_box else "missing"))
+    if "b_endstop_state" not in mcc_box:
+        problems.append("multi_color_controller.box.b_endstop_state is missing - Unload may stay disabled.")
+
+    slot0 = ((status.get("save_variables") or {}).get("variables") or {}).get("filament_slot0")
+    rows.append(("filament_slot0 format", "new (filament ID)" if isinstance(slot0, str) else f"old ({slot0!r})"))
+
+
+def check(root, moonraker):
+    rows = [("Script", VERSION), ("Python", platform.python_version()), ("QIDI packages", qidi_packages())]
+    problems = []
+    check_fluidd(root, rows, problems)
+    check_printer(moonraker, rows, problems)
+
+    print("### qidi_fluidd_box_fix --check report\n")
+    print("| Item | Value |\n|---|---|")
+    for name, value in rows:
+        print(f"| {name} | {str(value).replace('|', '/')} |")
+    print()
+    if problems:
+        print("**Result: NOT compatible as is**\n")
+        for p in problems:
+            print(f"- {p}")
+    else:
+        print("**Result: looks compatible**")
+    print(f"\nNothing was changed. To report, open an issue at {REPO}/issues and paste this whole report.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fix the Fluidd box panel for QIDI Max4 firmware 01.01.07.01")
     parser.add_argument("--fluidd-dir", default=DEFAULT_DIR, help=f"Fluidd directory (default {DEFAULT_DIR})")
     parser.add_argument("--restore", action="store_true", help="restore the original Fluidd files")
     parser.add_argument("--dry-run", action="store_true", help="only check whether the patch fits")
+    parser.add_argument("--check", action="store_true", help="read-only compatibility report for a GitHub issue")
+    parser.add_argument("--moonraker", default=DEFAULT_MOONRAKER, help=f"Moonraker URL for --check "
+                                                                       f"(default {DEFAULT_MOONRAKER})")
     args = parser.parse_args()
 
     root = pathlib.Path(args.fluidd_dir)
     try:
-        if args.restore:
+        if args.check:
+            check(root, args.moonraker)
+        elif args.restore:
             restore(root)
         else:
             patch(root, args.dry_run)
+    except PatchError as e:
+        sys.exit(f"ERROR: {e}")
     except PermissionError as e:
-        fail(f"{e}\nRun the script with sudo.")
+        sys.exit(f"ERROR: {e}\nRun the script with sudo.")
 
 
 if __name__ == "__main__":

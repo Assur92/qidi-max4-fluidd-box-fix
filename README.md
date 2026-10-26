@@ -87,6 +87,23 @@ from Configuration afterwards.
 On a phone, close the tab and open the page again. A plain refresh is not enough, because Fluidd's service worker keeps
 the old version while any Fluidd tab is open.
 
+## Other QIDI printers, or something does not work
+
+The fix was made and tested only on the Max4. Other QIDI models with a box may have the same problem,
+but they are **untested**. Before patching anything, run the read-only check:
+
+```bash
+python3 ~/qidi_fluidd_box_fix.py --check
+```
+
+It changes nothing. It reads the Fluidd files and asks the printer's Moonraker whether the box commands and data
+the fix relies on are there, then prints a short report ending with **looks compatible** or **NOT compatible as is**.
+The report has no IP addresses, hostnames or serial numbers.
+
+Please [open an issue](https://github.com/Assur92/qidi-max4-fluidd-box-fix/issues) and paste the whole report,
+with your printer model. That is how support for other models can be added safely.
+If your Fluidd lives somewhere else than `/home/qidi/fluidd`, add `--fluidd-dir /path/to/fluidd`.
+
 ## Undo
 
 ```bash
