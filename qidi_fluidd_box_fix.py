@@ -136,11 +136,23 @@ def fail(msg):
     sys.exit("ERROR: " + msg)
 
 
+# open() with newline="" keeps line endings byte for byte; pathlib's write_text(newline=) needs Python 3.10,
+# while the printer runs 3.9.
+def read_file(path):
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_file(path, text):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def find_bundle(root):
     index = root / "index.html"
     if not index.is_file():
         fail(f"{index} not found - is {root} the Fluidd directory?")
-    names = re.findall(r'src="(?:\./|/)?(assets/index-[\w-]+\.js)"', index.read_text(encoding="utf-8"))
+    names = re.findall(r'src="(?:\./|/)?(assets/index-[\w-]+\.js)"', read_file(index))
     if len(names) != 1:
         fail(f"could not find the main script in {index}")
     return names[0]
@@ -152,13 +164,13 @@ def backup_path(path):
 
 def original_text(path):
     """Text of the unpatched file: the file itself, or its backup if the file was patched before."""
-    text = path.read_text(encoding="utf-8")
+    text = read_file(path)
     if MARKER not in text:
         return text
     backup = backup_path(path)
     if not backup.is_file():
         fail(f"{path} is already patched but {backup} is missing - reinstall Fluidd from the QIDI update first")
-    text = backup.read_text(encoding="utf-8")
+    text = read_file(backup)
     if MARKER in text:
         fail(f"{backup} is a patched file, not the original")
     return text
@@ -181,7 +193,7 @@ def patch(root, dry_run):
     bundle = find_bundle(root)
     files = [(root / bundle, BUNDLE_REPLACEMENTS), (root / "sw.js", sw_replacements(bundle))]
 
-    current = {path: path.read_text(encoding="utf-8") for path, _ in files}
+    current = {path: read_file(path) for path, _ in files}
     if all(VERSION in text for text in current.values()):
         print(f"Already patched with {VERSION}, nothing to do.")
         return
@@ -199,7 +211,7 @@ def patch(root, dry_run):
             backup = backup_path(path)
             shutil.copy2(path, backup)
             print(f"Backup:  {backup}")
-        path.write_text(text, encoding="utf-8", newline="")
+        write_file(path, text)
         print(f"Patched: {path}")
     print("\nDone. Close every Fluidd tab, open Fluidd again and press Ctrl+F5 (on a phone: close the tab and reopen).")
 
@@ -209,13 +221,13 @@ def restore(root):
     restored = 0
     for path in (root / bundle, root / "sw.js"):
         backup = backup_path(path)
-        if MARKER not in path.read_text(encoding="utf-8"):
+        if MARKER not in read_file(path):
             print(f"{path} is not patched, skipped")
             continue
         if not backup.is_file():
             print(f"No backup for {path}, skipped")
             continue
-        if MARKER in backup.read_text(encoding="utf-8"):
+        if MARKER in read_file(backup):
             fail(f"{backup} is a patched file, not the original")
         shutil.copyfile(backup, path)
         backup.unlink()
