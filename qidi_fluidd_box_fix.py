@@ -8,14 +8,15 @@ shipped with it (v1.30.5) was not updated. Result: "?" instead of materials,
 dead Load/Unload/Eject buttons and broken material editing.
 
 This script patches the Fluidd files in place:
-  * slot material, vendor and colour are read from box_extras.boxes[].filament_info
-    (the same data QIDI Studio shows),
+  * slot material, vendor and colour are read from box_extras.boxes[].filament_info and
+    the external spool from multi_color_controller.extra (the same data QIDI Studio shows),
   * Eject/Load/Unload and RFID read send EJECT_/LOAD_/UNLOAD_FILAMENT_CONTROL and
     READ_RFID instead of the removed E_BOX/E_LOAD/E_UNLOAD/RFID_READ,
   * changing vendor/material/colour sends UPDATE_FILAMENT_INFORMATION (the command
-    QIDI Studio uses); the lists come from QIDI's new filament database,
-  * multi_color_controller updates are merged instead of replaced, so the
-    "box filament in path" state (b_endstop_state) is not lost,
+    QIDI Studio uses); the lists come from QIDI's filament database for the installed nozzle,
+  * multi_color_controller updates are merged recursively instead of replaced, so the
+    "box filament in path" state (b_endstop_state) and the Rack data are not lost,
+  * the pre-print check with the box disabled falls back to the filament sensor,
   * sw.js gets a new revision so browsers fetch the patched file.
 
 Usage (on the printer):
@@ -37,7 +38,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "qd-box-fix-v1"
+VERSION = "qd-box-fix-v2"
 MARKER = "qd-box-fix-"
 DEFAULT_DIR = "/home/qidi/fluidd"
 DEFAULT_MOONRAKER = "http://127.0.0.1:7125"
@@ -50,20 +51,41 @@ NEW_COMMANDS = ["LOAD_FILAMENT_CONTROL", "UNLOAD_FILAMENT_CONTROL", "EJECT_FILAM
 OLD_COMMANDS = ["E_LOAD", "E_UNLOAD", "E_BOX", "RFID_READ"]
 FILAMENT_INFO_KEYS = ["vendor_str", "filament_str", "color_rgb_str"]
 
-# Vendors and materials from QIDI_Client/resource/filament_config/filament-0.4.json
-# (the 0.4 file contains every entry of the other nozzle files). The firmware looks up "<vendor> <material>".
+# Vendors and materials per nozzle size, from QIDI_Client/resource/filament_config/filament-<nozzle>.json
+# in the 01.01.07.01 update. The firmware looks up "<vendor> <material>".
 FILAMENT_DB = {
-    "QIDI": ["PLA Basic", "PLA Matte Basic", "PLA Rapido", "PLA Rapido Matte", "PLA Rapido Metal", "PLA Silk",
-             "WOOD Rapido", "PLA-CF", "ASA", "ASA-Aero", "ABS-GF", "ASA-CF20 Core", "ABS Odorless", "ABS Rapido",
-             "ABS Rapido Metal", "PC/ABS-FR", "PETG Basic", "PETG Rapido", "PETG Tough", "PETG Translucent",
-             "PETG-CF", "PETG-GF", "PAHT-CF", "PA6-CF", "PA12-CF", "PAHT-GF", "UltraPA", "UltraPA-CF25", "PPS-CF",
-             "PPS-GF", "Support For PET/PA", "Support For PAHT", "PET-CF", "PET-GF", "TPU-Aero", "TPU 95A-HF",
-             "TPU-GF", "PEBA 95A"],
-    "Generic": ["ABS", "PC", "PETG", "PLA", "PLA Silk", "PLA+", "TPU 95A"],
-    "Bambu": ["ABS", "PETG", "PLA"],
-    "HATCHBOX": ["ABS", "PETG", "PLA"],
-    "Overture": ["ABS", "PLA"],
-    "Polymaker": ["ABS", "PLA", "PLA-HT"],
+    "0.2": {
+        "QIDI": ["PLA Basic", "PLA Matte Basic", "PLA Rapido", "PLA Rapido Matte", "PLA Rapido Metal", "ASA", "ABS Odorless", "ABS Rapido", "ABS Rapido Metal", "PETG Basic", "PETG Rapido", "PETG Tough", "PETG Translucent"],
+        "Generic": ["ABS", "PC", "PETG", "PLA", "PLA+"],
+        "Bambu": ["ABS", "PETG", "PLA"],
+        "HATCHBOX": ["ABS", "PETG", "PLA"],
+        "Overture": ["ABS", "PLA"],
+        "Polymaker": ["ABS", "PLA", "PLA-HT"],
+    },
+    "0.4": {
+        "QIDI": ["PLA Basic", "PLA Matte Basic", "PLA Rapido", "PLA Rapido Matte", "PLA Rapido Metal", "PLA Silk", "WOOD Rapido", "PLA-CF", "ASA", "ASA-Aero", "ABS-GF", "ASA-CF20 Core", "ABS Odorless", "ABS Rapido", "ABS Rapido Metal", "PC/ABS-FR", "PETG Basic", "PETG Rapido", "PETG Tough", "PETG Translucent", "PETG-CF", "PETG-GF", "PAHT-CF", "PA6-CF", "PA12-CF", "PAHT-GF", "UltraPA", "UltraPA-CF25", "PPS-CF", "PPS-GF", "Support For PET/PA", "Support For PAHT", "PET-CF", "PET-GF", "TPU-Aero", "TPU 95A-HF", "TPU-GF", "PEBA 95A"],
+        "Generic": ["ABS", "PC", "PETG", "PLA", "PLA Silk", "PLA+", "TPU 95A"],
+        "Bambu": ["ABS", "PETG", "PLA"],
+        "HATCHBOX": ["ABS", "PETG", "PLA"],
+        "Overture": ["ABS", "PLA"],
+        "Polymaker": ["ABS", "PLA", "PLA-HT"],
+    },
+    "0.6": {
+        "QIDI": ["PLA Basic", "PLA Matte Basic", "PLA Rapido", "PLA Rapido Matte", "PLA Rapido Metal", "PLA Silk", "WOOD Rapido", "PLA-CF", "ASA", "ABS-GF", "ASA-CF20 Core", "ABS Odorless", "ABS Rapido", "ABS Rapido Metal", "PC/ABS-FR", "PETG Basic", "PETG Rapido", "PETG Tough", "PETG Translucent", "PETG-CF", "PETG-GF", "PAHT-CF", "PA6-CF", "PA12-CF", "PAHT-GF", "UltraPA", "UltraPA-CF25", "PPS-CF", "PPS-GF", "Support For PET/PA", "Support For PAHT", "PET-CF", "PET-GF", "TPU-Aero", "TPU 95A-HF", "TPU-GF", "PEBA 95A"],
+        "Generic": ["ABS", "PC", "PETG", "PLA", "PLA Silk", "PLA+", "TPU 95A"],
+        "Bambu": ["ABS", "PETG", "PLA"],
+        "HATCHBOX": ["ABS", "PETG", "PLA"],
+        "Overture": ["ABS", "PLA"],
+        "Polymaker": ["ABS", "PLA", "PLA-HT"],
+    },
+    "0.8": {
+        "QIDI": ["PLA Basic", "PLA Matte Basic", "PLA Rapido", "PLA Rapido Matte", "PLA Rapido Metal", "WOOD Rapido", "PLA-CF", "ASA", "ABS-GF", "ASA-CF20 Core", "ABS Odorless", "ABS Rapido", "ABS Rapido Metal", "PC/ABS-FR", "PETG Basic", "PETG Rapido", "PETG Tough", "PETG Translucent", "PETG-CF", "PETG-GF", "PAHT-CF", "PA6-CF", "PA12-CF", "PAHT-GF", "UltraPA", "UltraPA-CF25", "PPS-CF", "PPS-GF", "Support For PET/PA", "Support For PAHT", "PET-CF", "PET-GF", "TPU 95A-HF", "TPU-GF"],
+        "Generic": ["ABS", "PC", "PETG", "PLA", "PLA+", "TPU 95A"],
+        "Bambu": ["ABS", "PETG", "PLA"],
+        "HATCHBOX": ["ABS", "PETG", "PLA"],
+        "Overture": ["ABS", "PLA"],
+        "Polymaker": ["ABS", "PLA", "PLA-HT"],
+    },
 }
 
 # Slot data from box_extras, injected into the `items` loop where m is the slot (0..15)
@@ -74,11 +96,19 @@ SLOT_FROM_BOX_EXTRAS = (
     "fc&&(C=\"#\"+String(fc).replace(\"#\",\"\"));w=fi.filament_str||w;S=fi.vendor_str||S}}"
 )
 
-# Methods added to the panel component. qdUpdateSlot fills the fields that were not
+# Methods added to the panel component. qdNewFw tells whether the selected slot (box slot or the external
+# spool, 16) has data in the new format; qdDb picks the material list for the installed nozzle (0.4 if unknown);
+# qdRack shows the external spool from multi_color_controller.extra; qdUpdateSlot fills the fields that were not
 # changed from the current slot state and sends the command in QIDI Studio's format.
 SLOT_METHODS = (
-    "qdNewFw(){return this.selectIndex<16&&!!this.$store.state.printer.printer.box_extras?.boxes?.[0]?.filament_info}"
-    "qdDb(){return " + json.dumps(FILAMENT_DB, separators=(",", ":")) + "}"
+    "qdNewFw(){const p=this.$store.state.printer.printer;return this.selectIndex<16"
+    "?!!p.box_extras?.boxes?.[0]?.filament_info:this.selectIndex===16&&!!p.multi_color_controller?.extra?.filament_info}"
+    "qdDb(){const all=" + json.dumps(FILAMENT_DB, separators=(",", ":")) + ","
+    "d=parseFloat(this.$store.state.printer.printer.configfile?.settings?.extruder?.nozzle_diameter);"
+    "return all[Object.keys(all).find(k=>Math.abs(parseFloat(k)-d)<.01)??\"0.4\"]}"
+    "qdRack(r){const fi=this.$store.state.printer.printer.multi_color_controller?.extra?.filament_info;"
+    "if(!fi?.filament_str)return r;const fc=fi.color_rgb_str?.[0];"
+    "return{...r,color:fc?\"#\"+String(fc).replace(\"#\",\"\"):r.color,filament:fi.filament_str,vendor:fi.vendor_str||r.vendor}}"
     "qdUpdateSlot(o){const db=this.qdDb(),it=this.items[this.selectIndex]||{};"
     "let v=o.vendor??it.vendor,f=o.filament??it.filament;"
     "db[v]||(v=Object.keys(db).find(k=>db[k].includes(f))??\"QIDI\");"
@@ -109,6 +139,20 @@ BUNDLE_REPLACEMENTS = [
         'color:(Array.isArray(this.variables.rackExtra[0])?"#"+String(this.variables.rackExtra[0][0]).replace("#",""):void 0)'
         '??((u=this.officialFilasListDictData)==null?void 0:u.colordict[this.variables.rackExtra[0]])??"#00000000"',
     ),
+    (
+        ',t[17]={label:"",color:"#00000000",filament:"",vendor:"",isRotating:!1},t}',
+        ',t[16]=this.qdRack(t[16]),t[17]={label:"",color:"#00000000",filament:"",vendor:"",isRotating:!1},t}',
+    ),
+    # Pre-print check with the box disabled: e_endstop_state / b_endstop_state are no longer in box_extras.
+    # Fall back to the external filament sensor and multi_color_controller (idea from Greg-LFT's Q2 patch).
+    (
+        "get isOkPrinter(){return this.enableBox===!1?this.$store.state.printer.printer.box_extras.e_endstop_state===1"
+        "?this.$store.state.printer.printer.box_extras.b_endstop_state===0?",
+        "get isOkPrinter(){const qp=this.$store.state.printer.printer,qx=qp.box_extras||{},"
+        "qe=qx.e_endstop_state??(qp[\"filament_switch_sensor filament_switch_sensor\"]?.filament_detected?1:0),"
+        "qb=qx.b_endstop_state??qp.multi_color_controller?.box?.b_endstop_state;"
+        "return this.enableBox===!1?qe===1?qb===0?",
+    ),
     ("set selectedVendor(t){", "set selectedVendor(t){" + edit_guard("vendor")),
     ("set selectedFilament(t){", "set selectedFilament(t){" + edit_guard("filament")),
     ("set selectedColor(t){", "set selectedColor(t){" + edit_guard("color")),
@@ -136,9 +180,11 @@ BUNDLE_REPLACEMENTS = [
     ),
     (
         "t[s]!==e.payload[s]&&$.set(r.printer[e.key],s,e.payload[s])",
-        "t[s]!==e.payload[s]&&$.set(r.printer[e.key],s,e.key===\"multi_color_controller\"&&t[s]"
-        "&&typeof t[s]==\"object\"&&!Array.isArray(t[s])&&e.payload[s]&&typeof e.payload[s]==\"object\""
-        "&&!Array.isArray(e.payload[s])?{...t[s],...e.payload[s]}:e.payload[s])",
+        # multi_color_controller sends only changed fields at any depth (e.g. extra.filament_info with just
+        # the colour), so its nested objects are merged recursively; arrays are replaced.
+        "t[s]!==e.payload[s]&&$.set(r.printer[e.key],s,e.key===\"multi_color_controller\""
+        "?function qm(a,b){if(!a||!b||typeof a!=\"object\"||typeof b!=\"object\"||Array.isArray(a)||Array.isArray(b))"
+        "return b;const o={...a};for(const k in b)o[k]=qm(a[k],b[k]);return o}(t[s],e.payload[s]):e.payload[s])",
     ),
 ]
 

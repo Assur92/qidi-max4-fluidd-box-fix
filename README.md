@@ -16,7 +16,7 @@ Unofficial fix for the **Material Control** (box / multi-colour) panel in Fluidd
 After updating to 01.01.07.01 the box works on the printer screen and in QIDI Studio, but in Fluidd:
 
 - every box slot shows **`?`** instead of the material and colour,
-- **Load / Unload / Eject** and the RFID read do nothing (the console reports an unknown command),
+- **Load / Unload / Eject** and the RFID read do nothing (Fluidd sends commands the new firmware no longer has),
 - changing vendor / material / colour in Fluidd writes data in the old format.
 
 **Cause:** the update changed how slot materials are stored and renamed the box G-code commands,
@@ -32,30 +32,38 @@ but the Fluidd build shipped with it (v1.30.5) was never updated to match.
 | RFID read | `RFID_READ SLOT=slotN` | `READ_RFID SLOT=N` |
 | Change material | `SAVE_VARIABLE …` | `UPDATE_FILAMENT_INFORMATION SLOT=N COLOR='RRGGBB' VENDOR='QIDI' FILAMENT='PETG Basic'` |
 
-One more problem: the new `multi_color_controller` object reports only *changed* fields in its status updates.
-Fluidd replaces the whole object on every update, so after a few seconds it loses the "box filament is in the path"
-flag (`b_endstop_state`). That is why **Unload** stays greyed out even with a slot loaded.
+One more problem: the new `multi_color_controller` object reports only *changed* fields in its status updates,
+at any depth (for example `extra.filament_info` with just the new colour). Fluidd replaces nested objects on every
+update, so after a few seconds it loses the "box filament is in the path" flag (`b_endstop_state`). That is why
+**Unload** stays greyed out even with a slot loaded.
 
 ## What the fix does
 
 The script patches two Fluidd files on the printer (`assets/index-*.js` and `sw.js`):
 
-- slot material, vendor and colour come from `box_extras` (the same data QIDI Studio shows),
+- slot material, vendor and colour come from `box_extras`, and the external spool (Rack) from
+  `multi_color_controller.extra` (the same data QIDI Studio shows),
 - Eject / Load / Unload / RFID send the new commands,
-- changing vendor, material or colour sends `UPDATE_FILAMENT_INFORMATION`, the same command QIDI Studio sends.
-  The vendor and material lists come from QIDI's new filament database, so you can only pick what the firmware knows,
-  and the firmware sets the print temperatures itself,
+- changing vendor, material or colour (box slots and the Rack) sends `UPDATE_FILAMENT_INFORMATION`, the same command
+  QIDI Studio sends, and the firmware sets the print temperatures itself.
+  The vendor and material lists come from QIDI's filament database for the **installed nozzle size**,
+  so you can only pick what the firmware knows,
 - `multi_color_controller` updates are merged, so Unload is enabled when a slot is loaded,
+- the pre-print check with the box disabled reads the external filament sensor and `multi_color_controller`,
+  because `box_extras` no longer has those fields,
 - `sw.js` gets a new revision so browsers load the patched file instead of a cached one.
 
-The external spool (Rack) still works the old way. Nothing in Klipper, Moonraker or the printer config is changed.
+Nothing in Klipper, Moonraker or the printer config is changed.
 
 ## Compatibility
 
 - QIDI Max4, firmware **QD_MAX4 01.01.07.01** (release 2026-10-16) with the Fluidd v1.30.5 shipped in it.
 - The script checks every place it changes. On any other Fluidd build it stops **without changing anything**.
-- Tested on one printer with one QIDI Box (box firmware 02.03.01.21) and spools without RFID tags.
-  **Not tested:** several boxes, the RS485 box, RFID-tagged spools. Feedback is welcome in the Issues.
+- Tested on one printer with one QIDI Box (box firmware 02.03.01.21), the Rack, and spools without RFID tags.
+  **Not tested:** several boxes, the RS485 box, RFID-tagged spools, the pre-print check with the box disabled.
+  Feedback is welcome in the Issues.
+- **QIDI Q2:** reported (#2) to ship the same Fluidd build, so the script should fit it. Not tested here; run `--check`.
+- **QIDI Plus 4 (firmware 2.1.1):** reported (#1) to still use the old slot format, so this fix does not apply there.
 
 ## Install
 
@@ -69,6 +77,9 @@ You need SSH access to the printer. The factory default login on the Max4 is use
   ```bash
   curl -fsSL -o ~/qidi_fluidd_box_fix.py https://raw.githubusercontent.com/Assur92/qidi-max4-fluidd-box-fix/main/qidi_fluidd_box_fix.py
   ```
+
+Optional: check that you got the right file. `sha256sum ~/qidi_fluidd_box_fix.py` should print
+`b7228af6ec99c11dbb8aa37ac79b509c95cf18fbadbe072983857643bafa5d25` (version `qd-box-fix-v2`).
 
 **2. Run it over SSH** (use the path where you put the script):
 
@@ -124,11 +135,17 @@ or the script needs an update (open an Issue).
 
 ## Limitations
 
-- The material list comes from the database for the 0.4 mm nozzle (56 entries, the full list).
-  The 0.2 mm database has only 29 entries, so with a 0.2 nozzle some materials may have no profile.
+- The material lists are built into the script from the 01.01.07.01 update (0.2 / 0.4 / 0.6 / 0.8 mm nozzles).
+  If QIDI adds materials in a later update, they will be missing until the script is updated.
 - Printing from Fluidd's own slot-mapping dialog still uses the old data. Start multi-colour prints from QIDI Studio.
-- QIDI's own macros `M603` / `M604` in `klipper-macros-qd/filament.cfg` still call the removed `E_LOAD` / `E_UNLOAD`.
-  That is a bug in the QIDI update itself; this script does not touch it.
+- QIDI's own macros `M603` / `M604` in `klipper-macros-qd/filament.cfg` still call `E_LOAD` / `E_UNLOAD`, which the
+  new firmware no longer registers. That is a bug in the QIDI update itself; this script does not touch it.
+
+## Credits
+
+Thanks to [ThorSc](https://github.com/ThorSc/qidi-max4-plus4-fluidd-box-patch) (Max 4 / Plus 4) and
+[Greg-LFT](https://github.com/Greg-LFT/Qidi-Q2-Fluidd-widget-box-repair) (Q2) for cross-checking and ideas:
+per-nozzle material lists, the Rack via `multi_color_controller.extra`, and the pre-print check fallback.
 
 ## Disclaimer
 
