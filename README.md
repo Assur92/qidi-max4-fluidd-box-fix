@@ -6,6 +6,7 @@ Unofficial fix for the **Material Control** (box / multi-colour) panel in Fluidd
 > **Applies to:** QIDI Max4 · firmware **QD_MAX4 01.01.07.01** · bundled **Fluidd v1.30.5** (`assets/index-DlFvHGAh.js`).
 > Different model or version? Run the [read-only check](#other-qidi-printers-or-something-does-not-work) first.
 > After a QIDI update, [run the script again](#after-the-next-qidi-update); to undo, see [Undo](#undo).
+> What changed between versions: [CHANGELOG](CHANGELOG.md).
 
 | Before: stock Fluidd after the update | After: with this fix |
 |---|---|
@@ -49,6 +50,8 @@ The script patches two Fluidd files on the printer (`assets/index-*.js` and `sw.
   The vendor and material lists come from QIDI's filament database for the **installed nozzle size**,
   so you can only pick what the firmware knows,
 - `multi_color_controller` updates are merged, so Unload is enabled when a slot is loaded,
+- the print-start dialog matches the file's materials to box slots using the new data, so it no longer shows `?`
+  and blocks **Print**,
 - the pre-print check with the box disabled reads the external filament sensor and `multi_color_controller`,
   because `box_extras` no longer has those fields,
 - `sw.js` gets a new revision so browsers load the patched file instead of a cached one.
@@ -60,7 +63,8 @@ Nothing in Klipper, Moonraker or the printer config is changed.
 - QIDI Max4, firmware **QD_MAX4 01.01.07.01** (release 2026-10-16) with the Fluidd v1.30.5 shipped in it.
 - The script checks every place it changes. On any other Fluidd build it stops **without changing anything**.
 - Tested on one printer with one QIDI Box (box firmware 02.03.01.21), the Rack, and spools without RFID tags.
-  **Not tested:** several boxes, the RS485 box, RFID-tagged spools, the pre-print check with the box disabled.
+  With the box disabled and no filament in the toolhead, the pre-print check correctly reports "No filament detected".
+  **Not tested:** several boxes, the RS485 box, RFID-tagged spools, the box-disabled check with filament loaded.
   Feedback is welcome in the Issues.
 - **QIDI Q2:** reported (#2) to ship the same Fluidd build, so the script should fit it. Not tested here; run `--check`.
 - **QIDI Plus 4 (firmware 2.1.1):** reported (#1) to still use the old slot format, so this fix does not apply there.
@@ -79,7 +83,7 @@ You need SSH access to the printer. The factory default login on the Max4 is use
   ```
 
 Optional: check that you got the right file. `sha256sum ~/qidi_fluidd_box_fix.py` should print
-`b7228af6ec99c11dbb8aa37ac79b509c95cf18fbadbe072983857643bafa5d25` (version `qd-box-fix-v2`).
+`231f2a9710746fc5c3573af178f4968d4ba3557830dbf0df43c6cb40cc2b888d` (version `qd-box-fix-v3`).
 
 **2. Run it over SSH** (use the path where you put the script):
 
@@ -137,7 +141,6 @@ or the script needs an update (open an Issue).
 
 - The material lists are built into the script from the 01.01.07.01 update (0.2 / 0.4 / 0.6 / 0.8 mm nozzles).
   If QIDI adds materials in a later update, they will be missing until the script is updated.
-- Printing from Fluidd's own slot-mapping dialog still uses the old data. Start multi-colour prints from QIDI Studio.
 - QIDI's own macros `M603` / `M604` in `klipper-macros-qd/filament.cfg` still call `E_LOAD` / `E_UNLOAD`, which the
   new firmware no longer registers. That is a bug in the QIDI update itself; this script does not touch it.
 

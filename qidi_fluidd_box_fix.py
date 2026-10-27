@@ -38,7 +38,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "qd-box-fix-v2"
+VERSION = "qd-box-fix-v3"
 MARKER = "qd-box-fix-"
 DEFAULT_DIR = "/home/qidi/fluidd"
 DEFAULT_MOONRAKER = "http://127.0.0.1:7125"
@@ -152,6 +152,26 @@ BUNDLE_REPLACEMENTS = [
         "qe=qx.e_endstop_state??(qp[\"filament_switch_sensor filament_switch_sensor\"]?.filament_detected?1:0),"
         "qb=qx.b_endstop_state??qp.multi_color_controller?.box?.b_endstop_state;"
         "return this.enableBox===!1?qe===1?qb===0?",
+    ),
+    # Print dialog slot mapping: slots get colour and material type from box_extras (qdType), and every
+    # type comparison uses it before the old index lookup.
+    (
+        "t[n]={label:a,color:l,filaIndex:c}",
+        "t[n]={label:a,color:l,filaIndex:c};const qfi=this.$store.state.printer.printer.box_extras?.boxes?.[Math.floor(n/4)]"
+        "?.filament_info?.[n%4];qfi&&(t[n]={label:a,color:qfi.color_rgb_str?.[0]?\"#\"+String(qfi.color_rgb_str[0])"
+        ".replace(\"#\",\"\"):l,filaIndex:c,qdType:qfi.filament_type})",
+    ),
+    (
+        "if(a===this.officialFilasListDictData[l.filaIndex].type)",
+        "if(a===(l.qdType??this.officialFilasListDictData[l.filaIndex]?.type))",
+    ),
+    (
+        "this.filelabels[t]!==this.officialFilasListDictData[(s=this.selectedValueSlot[t])==null?void 0:s.filaIndex].type",
+        "this.filelabels[t]!==((s=this.selectedValueSlot[t])?.qdType??this.officialFilasListDictData[s?.filaIndex]?.type)",
+    ),
+    (
+        "return((s=this.officialFilasListDictData[t.filaIndex])==null?void 0:s.type)===this.fileLabels[e]",
+        "return(t.qdType??((s=this.officialFilasListDictData[t.filaIndex])==null?void 0:s.type))===this.fileLabels[e]",
     ),
     ("set selectedVendor(t){", "set selectedVendor(t){" + edit_guard("vendor")),
     ("set selectedFilament(t){", "set selectedFilament(t){" + edit_guard("filament")),
